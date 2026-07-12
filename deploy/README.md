@@ -1,8 +1,13 @@
 # Deployment — home server (alyx) dev tier
 
-Pull-based continuous deployment for the **dev** tier on the self-hosted home server
-`alyx` (192.168.1.3). A systemd timer polls `origin/main`; on a new commit it hard-resets
-the checkout and redeploys the dev stack.
+Push-triggered continuous deployment for the **dev** tier on the self-hosted home server
+`alyx` (192.168.1.3). A **GitHub Actions self-hosted runner** on alyx picks up the
+`Deploy dev (alyx)` workflow (`.github/workflows/deploy-dev.yml`) on every push to
+`main` and redeploys the dev stack. Because the runner reaches GitHub over an outbound
+connection, no inbound access to the LAN is needed — the home server stays unexposed.
+
+A systemd polling timer (`budget-app-pull.timer`) is also provided as an offline fallback
+but is **disabled** by default now that Actions drives deploys (running both would race).
 
 ## Topology
 
@@ -23,11 +28,22 @@ mock/seed data, so each deploy re-runs migrations and reseeds `budget_dev`.
 
 ## How the pipeline works
 
-1. `budget-app-pull.timer` triggers `budget-app-pull.service` every 3 minutes.
-2. `pull-deploy.sh` fetches `origin/main`; if HEAD is unchanged it exits (no-op).
-3. On a new commit: `git reset --hard origin/main`, then
+1. A push to `main` starts the `Deploy dev (alyx)` workflow. The job targets
+   `runs-on: [self-hosted, alyx]`, so it executes on the runner on alyx.
+2. The job runs `FORCE=1 /data/docker/budget-app/deploy/pull-deploy.sh`.
+3. `pull-deploy.sh` fetches `origin/main`, `git reset --hard`es to it, then
    `docker compose -p budget-dev --env-file /data/docker/budget-app.dev.env
    -f deploy/docker-compose.dev.yml up -d --build --remove-orphans`, then an image prune.
+   (Without `FORCE=1` — e.g. the fallback timer — it no-ops when HEAD is unchanged.)
+
+## Self-hosted runner (on alyx)
+
+Installed at `/data/docker/actions-runner`, registered to `fcojocaru90/budget-app` with
+labels `self-hosted,alyx,dev`, running as a systemd service
+(`actions.runner.fcojocaru90-budget-app.alyx.service`) under user `luc90`.
+
+- Status:   `sudo systemctl status actions.runner.fcojocaru90-budget-app.alyx.service`
+- Re-token: `gh api -X POST repos/fcojocaru90/budget-app/actions/runners/registration-token`
 
 ## First-time install (on alyx)
 
@@ -36,21 +52,31 @@ mock/seed data, so each deploy re-runs migrations and reseeds `budget_dev`.
 cp /data/docker/budget-app/deploy/budget-app.dev.env.example /data/docker/budget-app.dev.env
 #    then edit it: set POSTGRES_PASSWORD (from /data/docker/.env)
 
-# 2. Install + enable the timer (system-level; runs as luc90)
-sudo cp /data/docker/budget-app/deploy/budget-app-pull.service /etc/systemd/system/
-sudo cp /data/docker/budget-app/deploy/budget-app-pull.timer   /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now budget-app-pull.timer
-
-# 3. Trigger the first deploy immediately (optional)
-sudo systemctl start budget-app-pull.service
-journalctl -u budget-app-pull.service -f
+# 2. Install the GitHub Actions self-hosted runner
+mkdir -p /data/docker/actions-runner && cd /data/docker/actions-runner
+curl -fsSL -o r.tgz https://github.com/actions/runner/releases/download/v2.335.1/actions-runner-linux-x64-2.335.1.tar.gz
+tar xzf r.tgz && rm r.tgz
+sudo ./bin/installdependencies.sh
+# registration token from the workstation: gh api -X POST .../actions/runners/registration-token
+./config.sh --url https://github.com/fcojocaru90/budget-app --token <TOKEN> \
+  --name alyx --labels self-hosted,alyx,dev --unattended --replace
+sudo ./svc.sh install luc90 && sudo ./svc.sh start
 ```
+
+Deploys then happen automatically on every push to `main`, or manually via the Actions
+tab (workflow dispatch) / `gh workflow run deploy-dev.yml`.
 
 ## Operating
 
-- Status:   `systemctl status budget-app-pull.timer`
-- Logs:     `journalctl -u budget-app-pull.service`
-- Pause:    `sudo systemctl disable --now budget-app-pull.timer`
-- Manual:   `sudo systemctl start budget-app-pull.service`
+- Runner:   `sudo systemctl status actions.runner.fcojocaru90-budget-app.alyx.service`
+- Runs:     `gh run list --workflow=deploy-dev.yml`  ·  `gh run view <id> --log`
+- Redeploy: `gh workflow run deploy-dev.yml`
 - Stack:    `docker compose -p budget-dev -f deploy/docker-compose.dev.yml ps`
+
+### Fallback polling timer (disabled by default)
+
+```bash
+sudo cp /data/docker/budget-app/deploy/budget-app-pull.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now budget-app-pull.timer   # only if NOT using the runner
+```
