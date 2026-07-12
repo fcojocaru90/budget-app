@@ -1,0 +1,87 @@
+# Local stack (INFRA-1): Postgres + Redis + API + OCR worker + frontend.
+# Bring it all up with:  docker compose up --build
+#
+# Host ports default to 8000 (API) and 5173 (frontend); override with API_PORT /
+# FRONTEND_PORT if those are already in use. Postgres and Redis are internal to the
+# compose network and not exposed to the host.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: budget
+      POSTGRES_PASSWORD: budget
+      POSTGRES_DB: budget_local
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U budget -d budget_local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgresql+psycopg://budget:budget@db:5432/budget_local
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      OCR_STORAGE_PATH: /app/uploads/receipts
+      CORS_ALLOWED_ORIGINS: http://localhost:${FRONTEND_PORT:-5173}
+      LOG_LEVEL: INFO
+      RUN_MIGRATIONS: "true"
+      SEED_ON_START: "true"
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - "${API_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  worker:
+    build: ./backend
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgresql+psycopg://budget:budget@db:5432/budget_local
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      OCR_STORAGE_PATH: /app/uploads/receipts
+      CORS_ALLOWED_ORIGINS: http://localhost:${FRONTEND_PORT:-5173}
+      LOG_LEVEL: INFO
+    volumes:
+      - uploads:/app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    # Override the API entrypoint so the worker doesn't re-run migrations.
+    entrypoint: []
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:${API_PORT:-8000}
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  uploads:

@@ -1,0 +1,21 @@
+# --- Secrets / env (never commit; .env.example is the template) ---
+.env
+.env.*
+!.env.example
+
+# --- Python / backend ---
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+backend/uploads/
+
+# --- Node / frontend ---
+node_modules/
+dist/
+.vite/
+*.log
+
+
+# --- OS ---
+.DS_Store
