@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll GitHub and redeploy Budget App dev stack on new commits
+
+[Timer]
+# First run shortly after boot, then poll every 3 minutes.
+OnBootSec=2min
+OnUnitActiveSec=3min
+Unit=budget-app-pull.service
+
+[Install]
+WantedBy=timers.target

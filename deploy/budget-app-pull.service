@@ -1,0 +1,11 @@
+[Unit]
+Description=Budget App — pull latest commit and redeploy the dev stack
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=luc90
+# git uses luc90's deploy key (~/.ssh/budget_deploy); docker via the docker group.
+ExecStart=/data/docker/budget-app/deploy/pull-deploy.sh

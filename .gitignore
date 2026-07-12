@@ -19,3 +19,6 @@ dist/
 
 # --- OS ---
 .DS_Store
+
+# Server-only dev env (secrets)
+deploy/budget-app.dev.env

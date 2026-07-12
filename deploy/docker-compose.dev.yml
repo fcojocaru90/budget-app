@@ -1,0 +1,71 @@
+# Dev-tier stack for the home server (alyx). Unlike the root docker-compose.yml,
+# this does NOT bundle its own Postgres/Redis — it joins the shared `budget-dev`
+# network and talks to the shared `budget-postgres` / `budget-redis` containers
+# (see /data/docker/docker-compose.shared.yml), using the `budget_dev` database
+# and Redis logical DB index 2.
+#
+# Secrets (POSTGRES_USER/PASSWORD) and host ports come from an env file that lives
+# only on alyx (see budget-app.dev.env.example); nothing here contains secrets.
+#
+# Deployed via deploy/pull-deploy.sh:
+#   docker compose -p budget-dev --env-file /data/docker/budget-app.dev.env \
+#     -f deploy/docker-compose.dev.yml up -d --build --remove-orphans
+
+services:
+  api:
+    build: ../backend
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@budget-postgres:5432/budget_dev
+      REDIS_URL: redis://budget-redis:6379/2
+      CELERY_BROKER_URL: redis://budget-redis:6379/2
+      OCR_STORAGE_PATH: /app/uploads/receipts
+      CORS_ALLOWED_ORIGINS: http://192.168.1.3:${DEV_FRONTEND_PORT:-8080}
+      LOG_LEVEL: INFO
+      RUN_MIGRATIONS: "true"
+      SEED_ON_START: "true"
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - "192.168.1.3:${DEV_API_PORT:-8000}:8000"
+    networks:
+      - budget-dev
+    restart: unless-stopped
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  worker:
+    build: ../backend
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@budget-postgres:5432/budget_dev
+      REDIS_URL: redis://budget-redis:6379/2
+      CELERY_BROKER_URL: redis://budget-redis:6379/2
+      OCR_STORAGE_PATH: /app/uploads/receipts
+      LOG_LEVEL: INFO
+    volumes:
+      - uploads:/app/uploads
+    networks:
+      - budget-dev
+    restart: unless-stopped
+    entrypoint: []
+    command: ["celery", "-A", "app.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+
+  frontend:
+    build:
+      context: ../frontend
+      args:
+        VITE_API_BASE_URL: http://192.168.1.3:${DEV_API_PORT:-8000}
+    ports:
+      - "192.168.1.3:${DEV_FRONTEND_PORT:-8080}:80"
+    networks:
+      - budget-dev
+    restart: unless-stopped
+    depends_on:
+      - api
+
+networks:
+  budget-dev:
+    external: true
+
+volumes:
+  uploads:
