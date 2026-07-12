@@ -19,12 +19,12 @@ git fetch --quiet origin "$BRANCH"
 local_sha="$(git rev-parse HEAD)"
 remote_sha="$(git rev-parse "origin/$BRANCH")"
 
-if [ "$local_sha" = "$remote_sha" ]; then
+if [ "$local_sha" = "$remote_sha" ] && [ "${FORCE:-0}" != "1" ]; then
     log "up to date ($local_sha)"
     exit 0
 fi
 
-log "new commit ${remote_sha} (was ${local_sha}) — deploying"
+log "deploying ${remote_sha} (was ${local_sha}${FORCE:+, forced})"
 git reset --hard "origin/$BRANCH"
 
 docker compose -p "$PROJECT" --env-file "$ENV_FILE" -f "$COMPOSE_FILE" \

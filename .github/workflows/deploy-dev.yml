@@ -1,0 +1,21 @@
+name: Deploy dev (alyx)
+
+# Push-triggered deployment to the self-hosted home server (alyx). The runner lives
+# on alyx and polls GitHub over an outbound connection, so no inbound access to the
+# LAN is required. On push to main (or manual dispatch) it redeploys the dev stack.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Never run two deploys at once; let an in-flight deploy finish before the next.
+concurrency:
+  group: deploy-dev-alyx
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, alyx]
+    steps:
+      - name: Pull latest and redeploy dev stack
+        run: FORCE=1 /data/docker/budget-app/deploy/pull-deploy.sh
